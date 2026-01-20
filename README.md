@@ -105,10 +105,25 @@ php artisan db:seed
 php artisan test
 ```
 
+### Run E2E Tests
+Automated end-to-end test scripts are available for manual verification:
+
+```bash
+# Run individual E2E tests
+php tests/e2e_test_1_paytech.php      # PayTech webhook ingestion
+php tests/e2e_test_2_acme.php         # Acme webhook ingestion
+php tests/e2e_test_3_idempotency.php  # Duplicate prevention
+php tests/e2e_test_4_xml_payout.php   # XML generation with conditional tags
+
+# View complete E2E test results
+cat e2e_tests_results.md
+```
+
 ### Current Test Status
 - **Total Tests:** 78
 - **Assertions:** 1187
 - **Coverage:** 100% of core business logic
+- **E2E Scripts:** 4 automated verification scripts
 
 ## End-to-End Testing Guide
 
@@ -453,14 +468,6 @@ Use PHP 8 `readonly` class for `ParsedTransaction` for language-level immutabili
 | NFR-03 | Queued Architecture | ✅ Database queue with async jobs |
 | NFR-04 | PSR-12 Standards | ✅ Code follows PSR-12 |
 | NFR-05 | Documentation | ✅ README + inline comments |
-
-## Future Enhancements
-
-1. **Additional Banks**: Add new parser classes implementing `WebhookParserInterface`
-2. **Debit Transactions**: Extend job to handle debit transactions
-3. **Webhook Retry Logic**: Auto-retry failed webhook processing
-4. **API Authentication**: Add API token authentication
-5. **Rate Limiting**: Add rate limiting for webhook endpoints
 
 ## License
 
