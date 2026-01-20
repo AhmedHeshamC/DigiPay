@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\WebhookController;
+use App\Http\Controllers\Api\PayoutController;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,4 +18,7 @@ use App\Http\Controllers\Api\WebhookController;
 Route::prefix('v1')->group(function () {
     // Webhook ingestion endpoint
     Route::post('/webhooks/{bankName}', [WebhookController::class, 'store']);
+
+    // XML payout endpoint
+    Route::post('/payouts/xml', [PayoutController::class, 'store']);
 });
