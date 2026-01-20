@@ -15,6 +15,9 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Create default wallet for webhook transactions
+        $this->call(WalletSeeder::class);
+
         // User::factory(10)->create();
 
         User::factory()->create([
