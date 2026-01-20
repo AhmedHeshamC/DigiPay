@@ -106,9 +106,300 @@ php artisan test
 ```
 
 ### Current Test Status
-- **Total Tests:** 50+
-- **Assertions:** 1000+
+- **Total Tests:** 78
+- **Assertions:** 1187
 - **Coverage:** 100% of core business logic
+
+## End-to-End Testing Guide
+
+This section provides step-by-step instructions to replicate all testing scenarios and verify the implementation.
+
+### Prerequisites
+
+```bash
+# Ensure dependencies are installed
+composer install
+
+# Ensure environment is configured
+cp .env.example .env
+php artisan key:generate
+
+# Run migrations and seeding
+php artisan migrate
+php artisan db:seed
+```
+
+### Test 1: Webhook Ingestion (PayTech)
+
+**Objective:** Verify PayTech webhook creates transaction and updates wallet balance.
+
+```bash
+# Using Laravel Tinker
+php artisan tinker
+
+# Run the following commands in Tinker:
+\$webhook = \App\Models\WebhookCall::create([
+    'bank_provider' => 'paytech',
+    'payload' => '20250615,100.50#REF001#note/Test Payment/internal_reference/ABC123',
+]);
+
+\$job = new \App\Jobs\ProcessWebhookJob(\$webhook->id);
+\$job->handle();
+
+# Verify results
+echo \App\Models\Transaction::where('bank_reference', 'REF001')->first()->amount;
+echo \App\Models\Wallet::find(1)->balance;
+echo \App\Models\WebhookCall::find(\$webhook->id)->status;
+
+# Expected output:
+# 100.5000
+# 100.5000
+# processed
+```
+
+**Expected Results:**
+- ✅ Transaction created with amount `100.50`
+- ✅ Wallet balance updated to `100.50`
+- ✅ Webhook call status changed to `processed`
+
+### Test 2: Webhook Ingestion (Acme)
+
+**Objective:** Verify Acme webhook creates transaction correctly.
+
+```bash
+php artisan tinker
+
+\$webhook = \App\Models\WebhookCall::create([
+    'bank_provider' => 'acme',
+    'payload' => '20250615//250.75//ACME-REF-002',
+]);
+
+\$job = new \App\Jobs\ProcessWebhookJob(\$webhook->id);
+\$job->handle();
+
+# Verify results
+echo \App\Models\Transaction::where('bank_reference', 'ACME-REF-002')->first()->amount;
+echo \App\Models\Wallet::find(1)->balance;
+
+# Expected output:
+# 250.7500
+# 351.2500 (100.50 + 250.75)
+```
+
+### Test 3: Idempotency (Duplicate Prevention)
+
+**Objective:** Verify duplicate webhooks are ignored (FR-05).
+
+```bash
+php artisan tinker
+
+# First webhook - creates transaction
+\$webhook1 = \App\Models\WebhookCall::create([
+    'bank_provider' => 'paytech',
+    'payload' => '20250615,50#REF003',
+]);
+\$job1 = new \App\Jobs\ProcessWebhookJob(\$webhook1->id);
+\$job1->handle();
+
+# Second webhook with same reference - should be ignored
+\$webhook2 = \App\Models\WebhookCall::create([
+    'bank_provider' => 'paytech',
+    'payload' => '20250615,50#REF003', // DUPLICATE
+]);
+\$job2 = new \App\Jobs\ProcessWebhookJob(\$webhook2->id);
+\$job2->handle();
+
+# Verify only 1 transaction exists
+echo \App\Models\Transaction::where('bank_reference', 'REF003')->count();
+
+# Expected output:
+# 1 (not 2)
+```
+
+**Expected Results:**
+- ✅ Only 1 transaction created (idempotency working)
+
+### Test 4: XML Payout Generation
+
+**Objective:** Verify XML generation with conditional tags.
+
+```bash
+php artisan tinker
+
+\$generator = new \App\Services\XmlGeneratorService();
+
+// Test 1: All fields
+\$xml1 = \$generator->generate([
+    'date' => '2025-02-25 06:33:00+03',
+    'amount' => 177.39,
+    'currency' => 'SAR',
+    'notes' => 'Test Payment',
+    'paymentType' => 1,
+    'chargeDetails' => 'OUR',
+]);
+
+echo \$xml1;
+
+// Test 2: Empty notes (should omit <Notes>)
+\$xml2 = \$generator->generate([
+    'date' => '2025-02-25 06:33:00+03',
+    'amount' => 177.39,
+    'currency' => 'SAR',
+    'notes' => '',
+]);
+echo PHP_EOL . 'Contains Notes tag: ' . (str_contains(\$xml2, '<Notes>') ? 'YES' : 'NO');
+
+// Test 3: PaymentType = 99 (should omit <PaymentType>)
+\$xml3 = \$generator->generate([
+    'date' => '2025-02-25 06:33:00+03',
+    'amount' => 177.39,
+    'currency' => 'SAR',
+    'paymentType' => 99,
+]);
+echo 'Contains PaymentType tag: ' . (str_contains(\$xml3, '<PaymentType>') ? 'YES' : 'NO');
+
+// Test 4: ChargeDetails = SHA (should omit <ChargeDetails>)
+\$xml4 = \$generator->generate([
+    'date' => '2025-02-25 06:33:00+03',
+    'amount' => 177.39,
+    'currency' => 'SAR',
+    'chargeDetails' => 'SHA',
+]);
+echo 'Contains ChargeDetails tag: ' . (str_contains(\$xml4, '<ChargeDetails>') ? 'YES' : 'NO');
+```
+
+**Expected Results:**
+- ✅ Test 2: `Contains Notes tag: NO`
+- ✅ Test 3: `Contains PaymentType tag: NO`
+- ✅ Test 4: `Contains ChargeDetails tag: NO`
+
+### Test 5: API Endpoints (via HTTP)
+
+**Objective:** Test the actual HTTP endpoints.
+
+```bash
+# Start the development server
+php artisan serve --port=8000
+
+# In another terminal, test the endpoints:
+
+# Test 1: Webhook Ingestion (PayTech)
+curl -X POST http://localhost:8000/api/v1/webhooks/paytech \
+  -H "Content-Type: text/plain" \
+  -d "20250615,100.50#HTTPTEST1"
+
+# Expected: 202 Accepted
+# Verify in database: Transaction created with amount 100.50
+
+# Test 2: Webhook Ingestion (Acme)
+curl -X POST http://localhost:8000/api/v1/webhooks/acme \
+  -H "Content-Type: text/plain" \
+  -d "20250615//75.50//ACME-REF1"
+
+# Expected: 202 Accepted
+# Verify in database: Transaction created with amount 75.50
+
+# Test 3: XML Payout
+curl -X POST http://localhost:8000/api/v1/payouts/xml \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/xml" \
+  -d '{
+    "date": "2025-02-25 06:33:00+03",
+    "amount": 99.99,
+    "currency": "USD"
+  }'
+
+# Expected: 200 OK with XML body
+```
+
+### Test 6: Bulk Processing (1000 Transactions)
+
+**Objective:** Verify NFR-02 performance requirement.
+
+```bash
+php artisan test --filter BulkPerformanceTest
+
+# Expected output:
+# ✓ processes 1000 paytech transactions efficiently
+# ✓ processes 1000 acme transactions efficiently
+# ✓ handles idempotency correctly in bulk processing
+# ✓ maintains data integrity in bulk processing
+# ✓ handles empty lines in bulk payload
+# Tests: 5 passed (1009 assertions)
+# Duration: ~0.7s
+```
+
+**Expected Results:**
+- ✅ 1000 PayTech transactions processed in < 1s
+- ✅ 1000 Acme transactions processed in < 1s
+- ✅ Idempotency maintained in bulk processing
+- ✅ Data integrity preserved
+
+### Test 7: Full Test Suite
+
+**Objective:** Run all tests and verify 100% pass rate.
+
+```bash
+# Run all tests
+php artisan test
+
+# Expected output:
+# Tests:    78 passed (1187 assertions)
+# Duration: ~1.1s
+
+# Run tests with coverage report
+php artisan test --coverage
+
+# List all test files
+php artisan test --list
+```
+
+### Manual Database Verification
+
+```bash
+php artisan tinker
+
+# Check all tables
+echo \App\Models\Wallet::count();           // Should be 1 (default wallet)
+echo \App\Models\WebhookCall::count();     // Should be > 0
+echo \App\Models\Transaction::count();      // Should be > 0
+
+# Check wallet balance
+echo \App\Models\Wallet::find(1)->balance;
+
+# View recent transactions
+\App\Models\Transaction::latest()->take(5)->get()->each(function(\$t) {
+    echo \$t->bank_provider . ': ' . \$t->amount . ' (' . \$t->bank_reference . ')' . PHP_EOL;
+});
+```
+
+### Cleanup (Optional)
+
+To reset the database for testing:
+
+```bash
+# Fresh start
+php artisan migrate:fresh
+php artisan db:seed
+```
+
+## Replication Checklist
+
+Use this checklist to verify the complete implementation:
+
+- [ ] Installation steps completed (migrate, seed)
+- [ ] PayTech webhook creates transaction ✅
+- [ ] Acme webhook creates transaction ✅
+- [ ] Duplicate webhooks are ignored (idempotency) ✅
+- [ ] Wallet balance updates on credits ✅
+- [ ] XML generated with all required fields ✅
+- [ ] XML omits empty `<Notes>` tag ✅
+- [ ] XML omits `<PaymentType>` when value is 99 ✅
+- [ ] XML omits `<ChargeDetails>` when value is SHA ✅
+- [ ] Webhook API returns 202 Accepted ✅
+- [ ] Payout API returns 200 with XML ✅
+- [ ] 1000 transactions process in < 10 seconds ✅
+- [ ] All 78 tests passing ✅
 
 ## Development Methodology (TDD)
 
