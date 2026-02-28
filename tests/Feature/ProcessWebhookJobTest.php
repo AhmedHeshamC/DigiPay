@@ -7,6 +7,7 @@ use App\Jobs\ProcessWebhookJob;
 use App\Models\WebhookCall;
 use App\Models\Transaction;
 use App\Models\Wallet;
+use App\Services\Notifications\NotificationDispatcher;
 use Tests\TestCase;
 
 class ProcessWebhookJobTest extends TestCase
@@ -27,7 +28,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         $this->assertDatabaseHas('transactions', [
             'bank_reference' => 'REF123',
@@ -47,7 +48,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         $this->assertDatabaseHas('transactions', [
             'bank_reference' => 'ACME-REF-001',
@@ -78,7 +79,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         // Should still only have 1 transaction
         $this->assertEquals(1, Transaction::where('bank_reference', 'REF123')->count());
@@ -95,7 +96,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         $this->assertEquals(3, Transaction::count());
         $this->assertEquals(50.00, Transaction::where('bank_reference', 'REF1')->first()->amount);
@@ -111,7 +112,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         $webhookCall->refresh();
         $this->assertEquals('failed', $webhookCall->status);
@@ -126,7 +127,7 @@ class ProcessWebhookJobTest extends TestCase
         ]);
 
         $job = new ProcessWebhookJob($webhookCall->id);
-        $job->handle();
+        $job->handle(new NotificationDispatcher());
 
         $wallet = Wallet::find(1);
         $this->assertEquals(100.00, $wallet->balance);

@@ -6,6 +6,7 @@ use App\Models\WebhookCall;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Services\Parsers\WebhookParserFactory;
+use App\Services\Notifications\NotificationDispatcher;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -28,7 +29,7 @@ class ProcessWebhookJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(): void
+    public function handle(NotificationDispatcher $notificationDispatcher): void
     {
         $webhookCall = WebhookCall::find($this->webhookCallId);
 
@@ -67,7 +68,7 @@ class ProcessWebhookJob implements ShouldQueue
                 }
 
                 // Create new transaction
-                Transaction::create([
+                $transaction = Transaction::create([
                     'wallet_id' => 1, // Default wallet per FR-06
                     'type' => 'credit',
                     'bank_reference' => $parsed['reference'],
@@ -76,6 +77,9 @@ class ProcessWebhookJob implements ShouldQueue
                     'bank_transaction_time' => now(),
                     'metadata' => $parsed['metadata'] ?? [],
                 ]);
+
+                // FR-10: Send notification on successful credit
+                $this->sendSuccessNotification($notificationDispatcher, $transaction);
 
                 $successCount++;
             }
@@ -95,7 +99,64 @@ class ProcessWebhookJob implements ShouldQueue
                 'status' => 'failed',
                 'error_message' => $e->getMessage(),
             ]);
+
+            // FR-10: Send notification on transaction failure
+            $this->sendFailureNotification($notificationDispatcher, $webhookCall, $e);
+
             // Don't re-throw - mark as failed and continue
+        }
+    }
+
+    /**
+     * Send success notification for a credited transaction.
+     * Per NFR-08: Notification failures must not affect the transaction outcome.
+     */
+    private function sendSuccessNotification(NotificationDispatcher $dispatcher, Transaction $transaction): void
+    {
+        try {
+            // Get wallet owner's email for notification
+            $wallet = Wallet::find($transaction->wallet_id);
+
+            if ($wallet && $wallet->email) {
+                $dispatcher->notifyTransactionSuccess(
+                    $transaction,
+                    'email', // Default to email channel
+                    $wallet->email
+                );
+            }
+        } catch (\Exception $e) {
+            // Log but don't throw - notifications are non-blocking per NFR-08
+            \Log::warning('Transaction success notification failed (non-blocking)', [
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Send failure notification for a failed transaction.
+     * Per NFR-08: Notification failures must not affect the transaction outcome.
+     */
+    private function sendFailureNotification(NotificationDispatcher $dispatcher, WebhookCall $webhookCall, Exception $e): void
+    {
+        try {
+            $wallet = Wallet::find(1); // Default wallet
+
+            if ($wallet && $wallet->email) {
+                $dispatcher->notifyTransactionFailure(
+                    $webhookCall->bank_reference ?? 'UNKNOWN',
+                    $webhookCall->bank_provider,
+                    'email',
+                    $wallet->email,
+                    $e->getMessage()
+                );
+            }
+        } catch (\Exception $notificationError) {
+            // Log but don't throw - notifications are non-blocking per NFR-08
+            \Log::warning('Transaction failure notification failed (non-blocking)', [
+                'webhook_call_id' => $webhookCall->id,
+                'error' => $notificationError->getMessage(),
+            ]);
         }
     }
 
